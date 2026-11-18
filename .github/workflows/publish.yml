@@ -1,0 +1,57 @@
+name: OneSMS 60 Days
+
+'on':
+  schedule:
+    - cron: '47 3 * * *'
+    - cron: '17,47 4-14 * * *'
+    - cron: '17 15 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'preview = no send, test = test channel, status = report, publish = next due'
+        type: choice
+        default: preview
+        options: [preview, test, status, publish]
+      day:
+        description: 'Day 1 to 60 for preview/test'
+        type: string
+        default: '1'
+      slot:
+        description: '0 = all six slots in preview/test'
+        type: choice
+        default: '0'
+        options: ['0', '1', '2', '3', '4', '5', '6']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: onesms-publisher
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Set publication history author
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Run OneSMS
+        env:
+          MODE: ${{ inputs.mode || 'publish' }}
+          DAY: ${{ inputs.day || '1' }}
+          SLOT: ${{ inputs.slot || '0' }}
+          ENABLE_POSTING: ${{ vars.ENABLE_POSTING }}
+          CAMPAIGN_START_DATE: ${{ vars.CAMPAIGN_START_DATE }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_TEST_CHANNEL_ID: ${{ secrets.TELEGRAM_TEST_CHANNEL_ID }}
+        run: python publish.py --mode "$MODE" --day "$DAY" --slot "$SLOT"
