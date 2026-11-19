@@ -1,9 +1,12 @@
 {
   "channel": "@mobin_sms",
   "start_date": "2026-11-19",
-  "sent": {},
-  "pending": {
-    "id": "onesms-d01-s1",
-    "at": "2026-11-19T15:44:34.405609+03:30"
-  }
+  "sent": {
+    "onesms-d01-s1": {
+      "id": "onesms-d01-s1",
+      "at": "2026-11-19T15:44:34.405609+03:30",
+      "message_id": 7
+    }
+  },
+  "pending": null
 }
