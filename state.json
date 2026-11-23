@@ -58,5 +58,8 @@
       "message_id": 17
     }
   },
-  "pending": null
+  "pending": {
+    "id": "onesms-d02-s6",
+    "at": "2026-11-23T18:01:16.292899+03:30"
+  }
 }
