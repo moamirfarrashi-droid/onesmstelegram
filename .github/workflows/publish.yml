@@ -4,15 +4,19 @@ name: OneSMS Services 60 Days
   schedule:
     - cron: '30 10,14,17 * * *'
       timezone: 'Asia/Tehran'
-    - cron: '55 10-18 * * *'
+    - cron: '55 10 * * *'
+      timezone: 'Asia/Tehran'
+    - cron: '25,55 11-23 * * *'
+      timezone: 'Asia/Tehran'
+    - cron: '15 0 * * *'
       timezone: 'Asia/Tehran'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'preview = no send, test = test channel, status = report, publish = next due'
+        description: 'preview = no send, test = test channel, status = report, publish = next due, audit = check overdue posts'
         type: choice
         default: preview
-        options: [preview, test, status, publish]
+        options: [preview, test, status, publish, audit]
       day:
         description: 'Day 1 to 60 for preview/test'
         type: string
@@ -47,7 +51,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
       - name: Run OneSMS
         env:
-          MODE: ${{ inputs.mode || 'publish' }}
+          MODE: ${{ inputs.mode || (github.event.schedule == '15 0 * * *' && 'audit') || 'publish' }}
           DAY: ${{ inputs.day || '1' }}
           SLOT: ${{ inputs.slot || '0' }}
           ENABLE_POSTING: ${{ vars.ENABLE_POSTING }}
