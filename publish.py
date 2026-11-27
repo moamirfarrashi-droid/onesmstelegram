@@ -3,6 +3,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import subprocess
 import time
 from datetime import date, datetime, time as clock, timedelta
@@ -19,7 +20,7 @@ POST_TIMES = ("10:30", "14:30", "17:30")
 POST_KINDS = ("photo", "text", "text")
 DAYS = 60
 SLOTS_PER_DAY = len(POST_TIMES)
-WINDOW_START, WINDOW_END = clock.fromisoformat(POST_TIMES[0]), clock(19)
+WINDOW_START, WINDOW_END = clock.fromisoformat(POST_TIMES[0]), clock(23, 59)
 CHAT = re.compile(r"@[a-zA-Z0-9_]+|-100\d+")
 TOKEN = re.compile(r"\d+:[A-Za-z0-9_-]+")
 
@@ -103,7 +104,11 @@ def telegram(method, token, fields, photo=None):
         if 400 <= error.code < 500:
             raise TelegramRejected(f"Telegram rejected {method} with HTTP {error.code}.") from None
         raise UncertainDelivery(f"Telegram returned HTTP {error.code} for {method}.") from None
-    except (URLError, OSError, ValueError):
+    except URLError as error:
+        if isinstance(error.reason, (socket.gaierror, ConnectionRefusedError)):
+            raise TelegramRejected(f"Connection to Telegram could not start for {method}; the next run will retry.") from None
+        raise UncertainDelivery(f"No reliable Telegram response for {method}.") from None
+    except (OSError, ValueError):
         raise UncertainDelivery(f"No reliable Telegram response for {method}.") from None
     if isinstance(response, dict) and response.get("ok") is False:
         detail = str(response.get("description", "")).replace(token, "[REDACTED]").splitlines()
@@ -198,12 +203,40 @@ def show_status(posts, state, now):
         print(f"{receipt['at']} | {receipt['id']} | Telegram message ID {receipt['message_id']}")
 
 
+def posting_enabled():
+    return os.environ.get("ENABLE_POSTING", "").strip().lower() == "true"
+
+
+def audit_publication(posts, state, now):
+    if not posting_enabled():
+        print("Publication audit skipped: automatic posting is paused.")
+        return
+    start = state["start_date"] or os.environ.get("SERVICE_CAMPAIGN_START_DATE", "").strip()
+    if not start:
+        raise ValueError("Set SERVICE_CAMPAIGN_START_DATE (YYYY-MM-DD, Tehran local date) in Actions variables.")
+    yesterday = now.date() - timedelta(days=1)
+    cutoff = datetime.combine(yesterday, clock.max, TEHRAN)
+    confirmed = {
+        post_id: receipt for post_id, receipt in state["sent"].items()
+        if datetime.fromisoformat(receipt["at"]).astimezone(TEHRAN) <= cutoff
+    }
+    overdue = due_posts(posts, {"sent": confirmed}, cutoff, start)
+    if overdue:
+        examples = ", ".join(post["id"] for post in overdue[:6])
+        detail = f" Pending verification: {state['pending']['id']}." if state["pending"] else ""
+        raise RuntimeError(
+            f"{len(overdue)} scheduled post(s) lacked publication confirmation by the end "
+            f"of {yesterday.isoformat()} Tehran. Oldest: {examples}.{detail}"
+        )
+    print(f"All posts due by the end of {yesterday.isoformat()} Tehran were confirmed.")
+
+
 def publish_next(posts, state, now):
-    if os.environ.get("ENABLE_POSTING", "").strip().lower() != "true":
+    if not posting_enabled():
         print("Automatic posting is disabled. Set the Actions variable ENABLE_POSTING to true when ready.")
         return
     if not WINDOW_START <= now.time() < WINDOW_END:
-        print("Outside 10:30–19:00 Tehran. Scheduled posts stay in the queue.")
+        print("Outside 10:30–23:59 Tehran. Scheduled posts stay in the queue.")
         return
     if state["pending"]:
         raise RuntimeError(f"Inspect Telegram before retrying pending post {state['pending']['id']}.")
@@ -228,14 +261,16 @@ def publish_next(posts, state, now):
         print("No post due yet.")
         return
     post = due[0]
+    publication_day = now.date()
     token = get_token()
     now = datetime.now(TEHRAN)
-    if not WINDOW_START <= now.time() < WINDOW_END:
+    if now.date() != publication_day or not WINDOW_START <= now.time() < WINDOW_END:
         print("Posting window just closed. The post remains queued.")
         return
     state.update(channel=channel, start_date=start, pending={"id": post["id"], "at": now.isoformat()})
     save_state(state)
-    if not WINDOW_START <= datetime.now(TEHRAN).time() < WINDOW_END:
+    after_save = datetime.now(TEHRAN)
+    if after_save.date() != publication_day or not WINDOW_START <= after_save.time() < WINDOW_END:
         state["pending"] = None
         save_state(state)
         print("Posting window closed while recording state. The post remains queued.")
@@ -254,7 +289,7 @@ def publish_next(posts, state, now):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["validate", "preview", "test", "publish", "status"], default="preview")
+    parser.add_argument("--mode", choices=["validate", "preview", "test", "publish", "status", "audit"], default="preview")
     parser.add_argument("--day", type=int, choices=range(1, DAYS + 1), default=1, metavar="1..60")
     parser.add_argument("--slot", type=int, choices=range(SLOTS_PER_DAY + 1), default=0, metavar="0..3")
     args = parser.parse_args()
@@ -268,6 +303,8 @@ def main():
             test_day(render(posts, args.day, args.slot))
         elif args.mode == "status":
             show_status(posts, repository_state(), datetime.now(TEHRAN))
+        elif args.mode == "audit":
+            audit_publication(posts, repository_state(), datetime.now(TEHRAN))
         else:
             publish_next(posts, repository_state(), datetime.now(TEHRAN))
     except (RuntimeError, ValueError, OSError, KeyError, TypeError) as error:
