@@ -13,10 +13,13 @@ from zoneinfo import ZoneInfo
 
 BASE = Path(__file__).resolve().parent
 POSTS = BASE / "posts.json"
-STATE = BASE / "state.json"
+STATE = BASE / "services-state.json"
 TEHRAN = ZoneInfo("Asia/Tehran")
-WINDOW_START, WINDOW_END = clock(7), clock(19)
-PHOTO = re.compile(r"onesms-day-\d{2}\.png")
+POST_TIMES = ("10:30", "14:30", "17:30")
+POST_KINDS = ("photo", "text", "text")
+DAYS = 60
+SLOTS_PER_DAY = len(POST_TIMES)
+WINDOW_START, WINDOW_END = clock.fromisoformat(POST_TIMES[0]), clock(19)
 CHAT = re.compile(r"@[a-zA-Z0-9_]+|-100\d+")
 TOKEN = re.compile(r"\d+:[A-Za-z0-9_-]+")
 
@@ -35,40 +38,27 @@ def read_json(path):
 
 def validate_posts():
     posts = read_json(POSTS)
-    if len(posts) != 360:
-        raise ValueError("posts.json must contain exactly 360 posts.")
-    photo_names, messages, questions = set(), set(), set()
+    expected_count = DAYS * SLOTS_PER_DAY
+    if not isinstance(posts, list) or len(posts) != expected_count:
+        raise ValueError(f"posts.json must contain exactly {expected_count} posts.")
+    messages = set()
     for index, post in enumerate(posts):
-        day, zero_slot = divmod(index, 6)
-        day, slot = day + 1, zero_slot + 1
-        kind = ("photo", "text", "text", "text", "text", "poll")[zero_slot]
-        if (post["id"], post["day"], post["slot"], post["kind"]) != (f"onesms-d{day:02}-s{slot}", day, slot, kind):
-            raise ValueError(f"Invalid post order or type at day {day} slot {slot}.")
-        stamp = clock.fromisoformat(post["time"])
-        if stamp.second or stamp.microsecond or not WINDOW_START <= stamp < WINDOW_END:
-            raise ValueError(f"Invalid posting hour at day {day} slot {slot}.")
-        if slot > 1 and post["time"] <= posts[index - 1]["time"]:
-            raise ValueError(f"Posting hours must increase within day {day}.")
-        if kind == "poll":
-            question = post["question"]
-            choices = post["options"]
-            if (not 1 <= len(question) <= 300 or not 2 <= len(choices) <= 12
-                    or not all(1 <= len(choice) <= 100 for choice in choices)
-                    or len(set(choices)) != len(choices) or question in questions):
-                raise ValueError(f"Invalid poll for day {day}.")
-            questions.add(question)
-            continue
+        zero_day, zero_slot = divmod(index, SLOTS_PER_DAY)
+        day, slot = zero_day + 1, zero_slot + 1
+        kind = POST_KINDS[zero_slot]
+        expected = (f"onesms-services-d{day:02}-s{slot}", day, slot, kind, POST_TIMES[zero_slot])
+        if (post["id"], post["day"], post["slot"], post["kind"], post["time"]) != expected:
+            raise ValueError(f"Invalid post order, type or hour at day {day} slot {slot}.")
         body = post["text"]
-        if not 1 <= len(body.encode("utf-16-le")) // 2 <= (1024 if kind == "photo" else 4096) or body in messages:
+        limit = 1024 if kind == "photo" else 4096
+        if not 1 <= len(body.encode("utf-16-le")) // 2 <= limit or body in messages:
             raise ValueError(f"Empty, duplicate or oversized text at day {day} slot {slot}.")
         messages.add(body)
         if kind == "photo":
             name = post["media"]
             asset = BASE / name
-            if (not PHOTO.fullmatch(name) or name in photo_names or not asset.is_file()
-                    or not 8 < asset.stat().st_size <= 10_000_000):
-                raise ValueError(f"Missing, duplicate or invalid photo for day {day}.")
-            photo_names.add(name)
+            if name != f"onesms-day-{day:02}.png" or not asset.is_file() or not 8 < asset.stat().st_size <= 10_000_000:
+                raise ValueError(f"Missing or invalid photo for day {day}.")
     return posts
 
 
@@ -83,7 +73,7 @@ def save_state(state):
     updated.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     updated.replace(STATE)
     for args in (["git", "add", "--", STATE.name],
-                 ["git", "commit", "-m", "Update OneSMS publication state"],
+                 ["git", "commit", "-m", "Update OneSMS services publication state"],
                  ["git", "push", "origin", "HEAD"]):
         result = subprocess.run(args, cwd=BASE, capture_output=True)
         if result.returncode:
@@ -125,11 +115,7 @@ def telegram(method, token, fields, photo=None):
 
 def send(post, channel, token):
     fields = {"chat_id": channel}
-    if post["kind"] == "poll":
-        fields.update(question=post["question"], options=[{"text": choice} for choice in post["options"]],
-                      is_anonymous=True)
-        result = telegram("sendPoll", token, fields)
-    elif post["kind"] == "photo":
+    if post["kind"] == "photo":
         fields["caption"] = post["text"]
         result = telegram("sendPhoto", token, fields, BASE / post["media"])
     else:
@@ -164,14 +150,9 @@ def render(posts, day, slot):
 def show_preview(posts):
     for post in posts:
         print(f"{post['time']} | {post['category']} | {post['id']}")
-        if post["kind"] == "poll":
-            print(post["question"])
-            for option in post["options"]:
-                print(f"• {option}")
-        else:
-            if post["kind"] == "photo":
-                print(f"Image: {post['media']}")
-            print(post["text"])
+        if post["kind"] == "photo":
+            print(f"Image: {post['media']}")
+        print(post["text"])
         print()
 
 
@@ -204,7 +185,7 @@ def due_posts(posts, state, now, start):
 
 
 def show_status(posts, state, now):
-    start = state["start_date"] or os.environ.get("CAMPAIGN_START_DATE", "").strip()
+    start = state["start_date"] or os.environ.get("SERVICE_CAMPAIGN_START_DATE", "").strip()
     due = due_posts(posts, state, now, start)
     today = [receipt for receipt in state["sent"].values()
              if datetime.fromisoformat(receipt["at"]).astimezone(TEHRAN).date() == now.date()]
@@ -222,21 +203,21 @@ def publish_next(posts, state, now):
         print("Automatic posting is disabled. Set the Actions variable ENABLE_POSTING to true when ready.")
         return
     if not WINDOW_START <= now.time() < WINDOW_END:
-        print("Outside 07:00–19:00 Tehran. Scheduled posts stay in the queue.")
+        print("Outside 10:30–19:00 Tehran. Scheduled posts stay in the queue.")
         return
     if state["pending"]:
         raise RuntimeError(f"Inspect Telegram before retrying pending post {state['pending']['id']}.")
     channel = get_channel("TELEGRAM_CHANNEL_ID")
-    start = state["start_date"] or os.environ.get("CAMPAIGN_START_DATE", "").strip()
+    start = state["start_date"] or os.environ.get("SERVICE_CAMPAIGN_START_DATE", "").strip()
     if not start:
-        raise ValueError("Set CAMPAIGN_START_DATE (YYYY-MM-DD, Tehran local date) in Actions variables.")
+        raise ValueError("Set SERVICE_CAMPAIGN_START_DATE (YYYY-MM-DD, Tehran local date) in Actions variables.")
     if state["channel"] and state["channel"] != channel:
         raise ValueError("Production channel differs from the saved channel. Restore the original channel ID before continuing.")
     if len(state["sent"]) == len(posts):
-        print("All 360 posts have been sent.")
+        print(f"All {len(posts)} posts have been sent.")
         return
     recent = sorted(datetime.fromisoformat(entry["at"]).astimezone(TEHRAN) for entry in state["sent"].values())
-    if len([stamp for stamp in recent if stamp.date() == now.date()]) >= 6:
+    if len([stamp for stamp in recent if stamp.date() == now.date()]) >= SLOTS_PER_DAY:
         print("Daily cap reached. Unsent posts remain queued.")
         return
     if recent and now - recent[-1] < timedelta(minutes=20):
@@ -274,13 +255,13 @@ def publish_next(posts, state, now):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["validate", "preview", "test", "publish", "status"], default="preview")
-    parser.add_argument("--day", type=int, choices=range(1, 61), default=1, metavar="1..60")
-    parser.add_argument("--slot", type=int, choices=range(7), default=0, metavar="0..6")
+    parser.add_argument("--day", type=int, choices=range(1, DAYS + 1), default=1, metavar="1..60")
+    parser.add_argument("--slot", type=int, choices=range(SLOTS_PER_DAY + 1), default=0, metavar="0..3")
     args = parser.parse_args()
     try:
         posts = validate_posts()
         if args.mode == "validate":
-            print("360 posts and 60 photo files validated.")
+            print(f"{len(posts)} posts and {DAYS} photo files validated.")
         elif args.mode == "preview":
             show_preview(render(posts, args.day, args.slot))
         elif args.mode == "test":
