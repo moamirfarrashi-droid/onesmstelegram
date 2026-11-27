@@ -180,6 +180,20 @@ def test_day(posts):
         print(f"{post['id']} sent to test. Message ID {send(post, test_channel, token)}")
 
 
+def test_main(posts, day, slot):
+    if slot == 0:
+        raise ValueError("Select slot 1, 2 or 3 for a single test on the production channel.")
+    post, = render(posts, day, slot)
+    channel = get_channel("TELEGRAM_CHANNEL_ID")
+    token = get_token()
+    chat = telegram("getChat", token, {"chat_id": channel})
+    if chat.get("type") != "channel" or type(chat.get("id")) is not int:
+        raise ValueError("TELEGRAM_CHANNEL_ID must identify the Telegram channel.")
+    annotated = {**post, "text": "🧪 تست انتشار\n\n" + post["text"]}
+    message_id = send(annotated, chat["id"], token)
+    print(f"{post['id']} sent as a test to the production channel. Telegram message ID {message_id}.")
+
+
 def due_posts(posts, state, now, start):
     if not start:
         return []
@@ -289,7 +303,7 @@ def publish_next(posts, state, now):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["validate", "preview", "test", "publish", "status", "audit"], default="preview")
+    parser.add_argument("--mode", choices=["validate", "preview", "test", "test_main", "publish", "status", "audit"], default="preview")
     parser.add_argument("--day", type=int, choices=range(1, DAYS + 1), default=1, metavar="1..60")
     parser.add_argument("--slot", type=int, choices=range(SLOTS_PER_DAY + 1), default=0, metavar="0..3")
     args = parser.parse_args()
@@ -301,6 +315,8 @@ def main():
             show_preview(render(posts, args.day, args.slot))
         elif args.mode == "test":
             test_day(render(posts, args.day, args.slot))
+        elif args.mode == "test_main":
+            test_main(posts, args.day, args.slot)
         elif args.mode == "status":
             show_status(posts, repository_state(), datetime.now(TEHRAN))
         elif args.mode == "audit":
