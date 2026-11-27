@@ -13,16 +13,16 @@ name: OneSMS Services 60 Days
   workflow_dispatch:
     inputs:
       mode:
-        description: 'preview = no send, test = test channel, status = report, publish = next due, audit = check overdue posts'
+        description: 'preview = no send, test = test channel, test_main = one marked test to the main channel, status = report, publish = next due, audit = check overdue posts'
         type: choice
         default: preview
-        options: [preview, test, status, publish, audit]
+        options: [preview, test, test_main, status, publish, audit]
       day:
-        description: 'Day 1 to 60 for preview/test'
+        description: 'Day 1 to 60 for preview/test/test_main'
         type: string
         default: '1'
       slot:
-        description: '0 = all three slots in preview/test'
+        description: '0 = all slots in preview/test; use 1, 2, or 3 for test_main'
         type: choice
         default: '0'
         options: ['0', '1', '2', '3']
