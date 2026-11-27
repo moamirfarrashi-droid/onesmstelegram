@@ -1,10 +1,11 @@
-name: OneSMS 60 Days
+name: OneSMS Services 60 Days
 
 'on':
   schedule:
-    - cron: '47 3 * * *'
-    - cron: '17,47 4-14 * * *'
-    - cron: '17 15 * * *'
+    - cron: '30 10,14,17 * * *'
+      timezone: 'Asia/Tehran'
+    - cron: '55 10-18 * * *'
+      timezone: 'Asia/Tehran'
   workflow_dispatch:
     inputs:
       mode:
@@ -17,10 +18,10 @@ name: OneSMS 60 Days
         type: string
         default: '1'
       slot:
-        description: '0 = all six slots in preview/test'
+        description: '0 = all three slots in preview/test'
         type: choice
         default: '0'
-        options: ['0', '1', '2', '3', '4', '5', '6']
+        options: ['0', '1', '2', '3']
 
 permissions:
   contents: write
@@ -50,7 +51,7 @@ jobs:
           DAY: ${{ inputs.day || '1' }}
           SLOT: ${{ inputs.slot || '0' }}
           ENABLE_POSTING: ${{ vars.ENABLE_POSTING }}
-          CAMPAIGN_START_DATE: ${{ vars.CAMPAIGN_START_DATE }}
+          SERVICE_CAMPAIGN_START_DATE: ${{ vars.SERVICE_CAMPAIGN_START_DATE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           TELEGRAM_TEST_CHANNEL_ID: ${{ secrets.TELEGRAM_TEST_CHANNEL_ID }}
